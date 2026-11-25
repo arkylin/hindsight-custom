@@ -153,8 +153,8 @@ jobs:
           CUTOFF=$(date -u -d "-${KEEP_DAYS} days" +%s)
           while IFS="$(printf '\t')" read -r id created tags; do
             [ -n "$id" ] || continue
-            if [ "$id" = "$NEWEST" ]; then
-              echo "keep newest: $id ($created) [$tags]"
+            if [ "$id" = "$NEWEST" ] || echo ",$tags," | grep -q ',latest,'; then
+              echo "keep newest/latest: $id ($created) [$tags]"
               continue
             fi
             ts=$(date -u -d "$created" +%s)
