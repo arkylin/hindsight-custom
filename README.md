@@ -41,8 +41,8 @@ dependencies are added.
 Manual trigger:
 
 ```bash
-gh workflow run build.yml -R arkylin/hindsight -f force=true
-gh workflow run build.yml -R arkylin/hindsight -f tag=v1.3.0 -f force=true
+gh workflow run build.yml -R arkylin/hindsight-custom -f force=true
+gh workflow run build.yml -R arkylin/hindsight-custom -f tag=v1.3.0 -f force=true
 ```
 
 ## Run
