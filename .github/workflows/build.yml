@@ -124,16 +124,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Make package public (best effort)
-        if: steps.image.outputs.exists == 'false'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api --method PATCH "/user/packages/container/${PACKAGE}" \
-            -H "Accept: application/vnd.github+json" \
-            -f visibility=public
-
       - name: Prune image versions (newest + 3 days)
         if: always()
         continue-on-error: true
