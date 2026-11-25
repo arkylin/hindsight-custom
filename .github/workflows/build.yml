@@ -26,9 +26,9 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ghcr.io/${{ github.repository }}
+  IMAGE: ghcr.io/arkylin/hindsight
   UPSTREAM: vectorize-io/hindsight
-  PACKAGE: ${{ github.event.repository.name }}
+  PACKAGE: hindsight
 
 jobs:
   build:

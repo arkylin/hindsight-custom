@@ -1,7 +1,11 @@
-# hindsight
+# hindsight-custom
 
 Custom **Hindsight** image built from the newest upstream tag, with the
 `static-keys-tenant` extension baked in.
+
+- GitHub repository: <https://github.com/arkylin/hindsight-custom>
+- GHCR image/package: `ghcr.io/arkylin/hindsight` (the package name does not
+  follow a repository rename)
 
 Upstream: <https://github.com/vectorize-io/hindsight>
 
