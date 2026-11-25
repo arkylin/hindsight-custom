@@ -90,6 +90,10 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Checkout build repository
+        if: steps.image.outputs.exists == 'false'
+        uses: actions/checkout@v4
+
       - name: Checkout upstream
         if: steps.image.outputs.exists == 'false'
         uses: actions/checkout@v4
@@ -107,8 +111,8 @@ jobs:
         if: steps.image.outputs.exists == 'false'
         uses: docker/build-push-action@v6
         with:
-          context: ./upstream
-          file: ./upstream/hindsight-extensions/static-keys-tenant/Dockerfile
+          context: .
+          file: ./Dockerfile
           build-args: |
             HINDSIGHT_IMAGE=${{ steps.base.outputs.image }}
           tags: |
