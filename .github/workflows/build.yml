@@ -140,6 +140,7 @@ jobs:
           echo "Versions (id, created_at, tags):"
           cat /tmp/versions.tsv
           NEWEST=$(sort -k2,2r /tmp/versions.tsv | head -n1 | cut -f1)
+          # Always keep the newest version, even when it is older than KEEP_DAYS.
           CUTOFF=$(date -u -d "-${KEEP_DAYS} days" +%s)
           while IFS="$(printf '\t')" read -r id created tags; do
             [ -n "$id" ] || continue

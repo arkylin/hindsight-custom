@@ -29,8 +29,10 @@ dependencies are added.
 - Otherwise checks out upstream at that tag and runs
   `hindsight-extensions/static-keys-tenant/Dockerfile`.
 - Pushes `<tag>`, `<version>` and `latest`.
-- Prunes GHCR versions: keeps the newest 1 version plus anything newer than
-  3 days (`min-versions-to-keep: 1`, `min-days-to-keep: 3`).
+- Prunes GHCR versions through `gh api`: keeps every version newer than
+  3 days, and always keeps the newest version even if it is already older than
+  3 days; among versions older than 3 days only that newest one survives.
+  Any version carrying the `latest` tag is also kept.
 
 Manual trigger:
 
