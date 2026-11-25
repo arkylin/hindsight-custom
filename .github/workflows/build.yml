@@ -134,16 +134,37 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -f visibility=public
 
-      - name: Prune old image versions
+      - name: Prune image versions (newest + 3 days)
         if: always()
         continue-on-error: true
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: ${{ env.PACKAGE }}
-          package-type: container
-          min-versions-to-keep: 1
-          min-days-to-keep: 3
-          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE: ${{ env.PACKAGE }}
+          KEEP_DAYS: "3"
+        run: |
+          set -euo pipefail
+          API="/user/packages/container/${PACKAGE}/versions"
+          gh api --paginate "$API" \
+            --jq '.[] | [.id, .created_at, ((.metadata.container.tags // []) | join(","))] | @tsv' \
+            > /tmp/versions.tsv
+          echo "Versions (id, created_at, tags):"
+          cat /tmp/versions.tsv
+          NEWEST=$(sort -k2,2r /tmp/versions.tsv | head -n1 | cut -f1)
+          CUTOFF=$(date -u -d "-${KEEP_DAYS} days" +%s)
+          while IFS="$(printf '\t')" read -r id created tags; do
+            [ -n "$id" ] || continue
+            if [ "$id" = "$NEWEST" ]; then
+              echo "keep newest: $id ($created) [$tags]"
+              continue
+            fi
+            ts=$(date -u -d "$created" +%s)
+            if [ "$ts" -lt "$CUTOFF" ]; then
+              echo "delete: $id ($created) [$tags]"
+              gh api --method DELETE "$API/$id"
+            else
+              echo "keep recent: $id ($created) [$tags]"
+            fi
+          done < /tmp/versions.tsv
 
       - name: Summary
         if: always()
