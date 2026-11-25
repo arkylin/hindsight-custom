@@ -1,0 +1,158 @@
+name: build-hindsight
+
+on:
+  schedule:
+    # Daily at 09:00 Asia/Shanghai (01:00 UTC)
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Upstream tag (e.g. v1.3.0). Empty = newest stable semver tag."
+        required: false
+        default: ""
+      force:
+        description: "Rebuild even if the custom image tag already exists."
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-hindsight
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository }}
+  UPSTREAM: vectorize-io/hindsight
+  PACKAGE: ${{ github.event.repository.name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve upstream tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-}"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh api --paginate "repos/${UPSTREAM}/tags" --jq '.[].name' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | sort -V | tail -n1)
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::No stable upstream tag found"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved upstream tag: $TAG (version $VERSION)"
+
+      - name: Check slim base image
+        id: base
+        run: |
+          set -euo pipefail
+          V="${{ steps.tag.outputs.version }}"
+          BASE="${REGISTRY}/vectorize-io/hindsight:${V}-slim"
+          if ! docker manifest inspect "$BASE" >/dev/null 2>&1; then
+            echo "::error::Base image not found: $BASE (release images may still be building; retry next run)"
+            exit 1
+          fi
+          echo "image=$BASE" >> "$GITHUB_OUTPUT"
+          echo "Base: $BASE"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check custom image
+        id: image
+        env:
+          INPUT_FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          if [ "${INPUT_FORCE}" != "true" ] && docker manifest inspect "${IMAGE}:${TAG}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image already exists: ${IMAGE}:${TAG} (skip build)"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout upstream
+        if: steps.image.outputs.exists == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM }}
+          ref: ${{ steps.tag.outputs.tag }}
+          path: upstream
+          fetch-depth: 1
+
+      - name: Set up Buildx
+        if: steps.image.outputs.exists == 'false'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        if: steps.image.outputs.exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./upstream
+          file: ./upstream/hindsight-extensions/static-keys-tenant/Dockerfile
+          build-args: |
+            HINDSIGHT_IMAGE=${{ steps.base.outputs.image }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+            ${{ env.IMAGE }}:${{ steps.tag.outputs.version }}
+            ${{ env.IMAGE }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.tag.outputs.tag }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Make package public (best effort)
+        if: steps.image.outputs.exists == 'false'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PATCH "/user/packages/container/${PACKAGE}" \
+            -H "Accept: application/vnd.github+json" \
+            -f visibility=public
+
+      - name: Prune old image versions
+        if: always()
+        continue-on-error: true
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ env.PACKAGE }}
+          package-type: container
+          min-versions-to-keep: 1
+          min-days-to-keep: 3
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Hindsight custom image"
+            echo ""
+            echo "- upstream tag: \`${{ steps.tag.outputs.tag }}\`"
+            echo "- base image: \`${{ steps.base.outputs.image }}\`"
+            echo "- build skipped: \`${{ steps.image.outputs.exists }}\`"
+            echo "- image: \`${{ env.IMAGE }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
