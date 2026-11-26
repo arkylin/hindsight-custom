@@ -11,7 +11,7 @@ on:
         required: false
         default: ""
       force:
-        description: "Rebuild even if the custom image tag already exists."
+        description: "Rebuild even if both custom variant tags already exist."
         type: boolean
         required: false
         default: false
@@ -31,8 +31,12 @@ env:
   PACKAGE: hindsight
 
 jobs:
-  build:
+  resolve-tag:
+    name: Resolve upstream tag
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - name: Resolve upstream tag
         id: tag
@@ -46,9 +50,11 @@ jobs:
             TAG=$(gh api --paginate "repos/${UPSTREAM}/tags" --jq '.[].name' \
               | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
               | sort -V | tail -n1)
+          else
+            TAG="v${TAG#v}"
           fi
-          if [ -z "$TAG" ]; then
-            echo "::error::No stable upstream tag found"
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Expected a stable vX.Y.Z upstream tag, got: ${TAG:-<empty>}"
             exit 1
           fi
           VERSION="${TAG#v}"
@@ -56,19 +62,23 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved upstream tag: $TAG (version $VERSION)"
 
-      - name: Check slim base image
-        id: base
-        run: |
-          set -euo pipefail
-          V="${{ steps.tag.outputs.version }}"
-          BASE="${REGISTRY}/vectorize-io/hindsight:${V}-slim"
-          if ! docker manifest inspect "$BASE" >/dev/null 2>&1; then
-            echo "::error::Base image not found: $BASE (release images may still be building; retry next run)"
-            exit 1
-          fi
-          echo "image=$BASE" >> "$GITHUB_OUTPUT"
-          echo "Base: $BASE"
-
+  build:
+    name: Build ${{ matrix.variant }}
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            base_suffix: ""
+            tag_suffix: ""
+            cache_scope: full
+          - variant: slim
+            base_suffix: "-slim"
+            tag_suffix: "-slim"
+            cache_scope: slim
+    steps:
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -80,15 +90,68 @@ jobs:
         id: image
         env:
           INPUT_FORCE: ${{ inputs.force }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+          VARIANT_SUFFIX: ${{ matrix.tag_suffix }}
+          EXPECTED_VARIANT: ${{ matrix.variant }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.tag.outputs.tag }}"
-          if [ "${INPUT_FORCE}" != "true" ] && docker manifest inspect "${IMAGE}:${TAG}" >/dev/null 2>&1; then
+          REF="${IMAGE}:${TAG}${VARIANT_SUFFIX}"
+          if [ "${INPUT_FORCE}" = "true" ]; then
+            echo "Force rebuild requested for ${REF}"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! docker manifest inspect "$REF" >/dev/null 2>&1; then
+            echo "Image does not exist yet: ${REF}"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Legacy tags were slim-only and have no variant label. Rebuild those
+          # once so Full becomes the canonical `latest` image.
+          IMAGE_INFO=$(docker buildx imagetools inspect "$REF" \
+            --format '{{json (index .Image "linux/amd64")}}' 2>/dev/null || true)
+          if [ -z "$IMAGE_INFO" ] || [ "$IMAGE_INFO" = "null" ]; then
+            IMAGE_INFO=$(docker buildx imagetools inspect "$REF" \
+              --format '{{json .Image}}' 2>/dev/null || true)
+          fi
+          ACTUAL_VARIANT=$(printf '%s' "$IMAGE_INFO" \
+            | jq -r '.config.Labels["io.github.arkylin.hindsight.variant"] // empty' \
+            2>/dev/null || true)
+          if [ "$ACTUAL_VARIANT" = "$EXPECTED_VARIANT" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Image already exists: ${IMAGE}:${TAG} (skip build)"
+            echo "Image already exists: ${REF} (${EXPECTED_VARIANT})"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Rebuilding ${REF}: variant label is '${ACTUAL_VARIANT:-missing}', expected '${EXPECTED_VARIANT}'"
           fi
+
+      - name: Check base image
+        if: steps.image.outputs.exists == 'false'
+        id: base
+        env:
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
+          BASE_SUFFIX: ${{ matrix.base_suffix }}
+        run: |
+          set -euo pipefail
+          BASE="${REGISTRY}/${UPSTREAM}:${VERSION}${BASE_SUFFIX}"
+          if ! docker manifest inspect "$BASE" >/dev/null 2>&1; then
+            echo "::error::Base image not found: $BASE (release images may still be building; retry next run)"
+            exit 1
+          fi
+          echo "image=$BASE" >> "$GITHUB_OUTPUT"
+          echo "Base: $BASE"
+
+      - name: Free disk space for full image
+        if: steps.image.outputs.exists == 'false' && matrix.variant == 'full'
+        uses: jlumbroso/free-disk-space@v2.0.0
+        with:
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
 
       - name: Checkout build repository
         if: steps.image.outputs.exists == 'false'
@@ -99,9 +162,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ env.UPSTREAM }}
-          ref: ${{ steps.tag.outputs.tag }}
+          ref: ${{ needs.resolve-tag.outputs.tag }}
           path: upstream
           fetch-depth: 1
+
+      - name: Set up QEMU
+        if: steps.image.outputs.exists == 'false'
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Buildx
         if: steps.image.outputs.exists == 'false'
@@ -116,21 +183,48 @@ jobs:
           build-args: |
             HINDSIGHT_IMAGE=${{ steps.base.outputs.image }}
           tags: |
-            ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
-            ${{ env.IMAGE }}:${{ steps.tag.outputs.version }}
-            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ needs.resolve-tag.outputs.tag }}${{ matrix.tag_suffix }}
+            ${{ env.IMAGE }}:${{ needs.resolve-tag.outputs.version }}${{ matrix.tag_suffix }}
+            ${{ env.IMAGE }}:latest${{ matrix.tag_suffix }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ steps.tag.outputs.tag }}
-          platforms: linux/amd64
+            org.opencontainers.image.revision=${{ needs.resolve-tag.outputs.tag }}
+            org.opencontainers.image.version=${{ needs.resolve-tag.outputs.version }}
+            org.opencontainers.image.title=Hindsight custom ${{ matrix.variant }}
+            io.github.arkylin.hindsight.variant=${{ matrix.variant }}
+            io.github.arkylin.hindsight.base=${{ steps.base.outputs.image }}
+          platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=hindsight-${{ matrix.cache_scope }}
+          cache-to: type=gha,scope=hindsight-${{ matrix.cache_scope }},mode=max
 
-      - name: Prune image versions (newest + 3 days)
+      - name: Summary
         if: always()
-        continue-on-error: true
+        env:
+          VARIANT_SUFFIX: ${{ matrix.tag_suffix }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
+          EXISTS: ${{ steps.image.outputs.exists }}
+        run: |
+          {
+            echo "### Hindsight custom image (${{ matrix.variant }})"
+            echo ""
+            echo "- upstream tag: \`${TAG}\`"
+            echo "- base image: \`${{ steps.base.outputs.image }}\`"
+            echo "- build skipped: \`${EXISTS}\`"
+            echo "- image: \`${IMAGE}\`"
+            echo "- tags: \`${IMAGE}:latest${VARIANT_SUFFIX}\`, \`${IMAGE}:${TAG}${VARIANT_SUFFIX}\`, \`${IMAGE}:${VERSION}${VARIANT_SUFFIX}\`"
+            echo "- platforms: \`linux/amd64\`, \`linux/arm64\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  prune:
+    name: Prune GHCR versions
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune image versions (newest + 3 days)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PACKAGE: ${{ env.PACKAGE }}
@@ -148,8 +242,8 @@ jobs:
           CUTOFF=$(date -u -d "-${KEEP_DAYS} days" +%s)
           while IFS="$(printf '\t')" read -r id created tags; do
             [ -n "$id" ] || continue
-            if [ "$id" = "$NEWEST" ] || echo ",$tags," | grep -q ',latest,'; then
-              echo "keep newest/latest: $id ($created) [$tags]"
+            if [ "$id" = "$NEWEST" ] || echo ",$tags," | grep -Eq ',(latest|latest-slim),'; then
+              echo "keep newest/latest-tagged: $id ($created) [$tags]"
               continue
             fi
             ts=$(date -u -d "$created" +%s)
@@ -160,15 +254,3 @@ jobs:
               echo "keep recent: $id ($created) [$tags]"
             fi
           done < /tmp/versions.tsv
-
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "### Hindsight custom image"
-            echo ""
-            echo "- upstream tag: \`${{ steps.tag.outputs.tag }}\`"
-            echo "- base image: \`${{ steps.base.outputs.image }}\`"
-            echo "- build skipped: \`${{ steps.image.outputs.exists }}\`"
-            echo "- image: \`${{ env.IMAGE }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
