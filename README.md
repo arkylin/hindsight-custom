@@ -105,3 +105,16 @@ See the upstream extension READMEs for the full configuration:
 - Repository artifact/log retention is set to 3 days.
 - This repository only builds the images; deployment configuration lives with
   the deployment, not here.
+
+## PostgreSQL image
+
+The external PostgreSQL image used by the Agents deployment is prebuilt and
+published to GHCR instead of being compiled on the server:
+
+```text
+ghcr.io/arkylin/hindsight-postgres:18.6-pgvector0.8.7-pgroonga4.1.0
+```
+
+It contains PostgreSQL 18.6, pgvector 0.8.7 and PGroonga 4.1.0. See
+[`postgres/README.md`](postgres/README.md) and
+`.github/workflows/build-postgres.yml`.
