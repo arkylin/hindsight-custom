@@ -14,7 +14,7 @@ Upstream: <https://github.com/vectorize-io/hindsight>
 
 | Variant | GHCR tags | Size (AMD64) | When to use |
 | --- | --- | --- | --- |
-| **Full** (`latest`) | `latest`, `vX.Y.Z`, `X.Y.Z` | ~5.1 GB (~1.4 GB download) | Default. Embeddings and reranking run in the image with `hs-embed-1` and `hs-rerank-1`; the LLM is always external. Knowledge Banks reuse `hs-embed-1` in text-only mode. |
+| **Full** (`latest`) | `latest`, `vX.Y.Z`, `X.Y.Z` | ~860 MB image (~0.8 GB download) + ~800 MB external model cache | Default. Embeddings and reranking run locally with `hs-embed-1` and `hs-rerank-1`; all model weights are mounted from `/opt/hindsight/hf-cache`. The LLM is always external. Knowledge Banks reuse `hs-embed-1` in text-only mode. |
 | **Slim** (`latest-slim`) | `latest-slim`, `vX.Y.Z-slim`, `X.Y.Z-slim` | ~1.4 GB (~600 MB download) | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](https://hindsight.vectorize.io/developer/configuration#embeddings). |
 
 Both variants are built for `linux/amd64` and include both extensions. No
