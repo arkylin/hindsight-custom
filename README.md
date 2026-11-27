@@ -12,14 +12,13 @@ Upstream: <https://github.com/vectorize-io/hindsight>
 
 ## Image variants
 
-| Variant | GHCR tags | Size (AMD64) | Size (ARM64) | When to use |
-| --- | --- | --- | --- | --- |
-| **Full** (`latest`) | `latest`, `vX.Y.Z`, `X.Y.Z` | ~4.5 GB (~2.2 GB download) | ~4.4 GB (~2.1 GB download) | Default. Embeddings and reranking run in the image, and the knowledge banks' EmbeddingGemma 2 model (~1.5 GB) is bundled so they work offline; the LLM is always external, including for local inference. |
-| **Slim** (`latest-slim`) | `latest-slim`, `vX.Y.Z-slim`, `X.Y.Z-slim` | ~1.4 GB (~600 MB download) | ~1.4 GB (~570 MB download) | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](https://hindsight.vectorize.io/developer/configuration#embeddings). |
+| Variant | GHCR tags | Size (AMD64) | When to use |
+| --- | --- | --- | --- |
+| **Full** (`latest`) | `latest`, `vX.Y.Z`, `X.Y.Z` | ~5.1 GB (~1.4 GB download) | Default. Embeddings and reranking run in the image with `hs-embed-1` and `hs-rerank-1`; the LLM is always external. Knowledge Banks reuse `hs-embed-1` in text-only mode. |
+| **Slim** (`latest-slim`) | `latest-slim`, `vX.Y.Z-slim`, `X.Y.Z-slim` | ~1.4 GB (~600 MB download) | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](https://hindsight.vectorize.io/developer/configuration#embeddings). |
 
-Both variants are multi-arch (`linux/amd64`, `linux/arm64`) and include both
-extensions. They are built from the matching upstream Full or Slim image for
-the same tag; no third-party dependencies are added.
+Both variants are built for `linux/amd64` and include both extensions. No
+third-party dependencies are added.
 
 The Full variant is built from the upstream source Dockerfile in GitHub Actions
 with `PRELOAD_ML_MODELS=false`, then bakes only `hs-embed-1` for text embeddings
@@ -49,8 +48,7 @@ ghcr.io/arkylin/hindsight:1.3.0-slim      # Slim, version without v
   when its own custom tag already exists with the expected variant label, so a
   legacy Slim `latest` cannot block the Full image.
 - Publishes `latest`, `vX.Y.Z` and `X.Y.Z` for Full, plus `latest-slim`,
-  `vX.Y.Z-slim` and `X.Y.Z-slim` for Slim, for `linux/amd64` and
-  `linux/arm64`.
+  `vX.Y.Z-slim` and `X.Y.Z-slim` for Slim, for `linux/amd64`.
 - Prunes GHCR versions through `gh api`: keeps every version newer than
   3 days, the newest version, and any version carrying `latest` or
   `latest-slim`; other older versions are deleted.
