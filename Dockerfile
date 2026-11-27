@@ -6,7 +6,7 @@ ARG HINDSIGHT_VARIANT=full
 
 COPY upstream/hindsight-extensions/static-keys-tenant/hindsight_ext_static_keys_tenant /app/extensions/hindsight_ext_static_keys_tenant
 COPY upstream/hindsight-extensions/bank-llm-routing/hindsight_ext_bank_llm_routing /app/extensions/hindsight_ext_bank_llm_routing
-COPY scripts/prepare-local-models.py /tmp/prepare-local-models.py
+COPY --chown=1000:1000 scripts/prepare-local-models.py /tmp/prepare-local-models.py
 ENV PYTHONPATH=/app/extensions
 
 RUN /app/api/.venv/bin/python -c "import hindsight_ext_static_keys_tenant, hindsight_ext_bank_llm_routing"
