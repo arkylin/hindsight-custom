@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Trim the Full image to the local models this deployment uses."""
 
+from pathlib import Path
+
 from huggingface_hub import scan_cache_dir, snapshot_download
 
 REMOVE_REPOS = {
@@ -14,7 +16,9 @@ KEEP_REPOS = (
 
 
 def main() -> None:
-    cache = scan_cache_dir()
+    cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache = scan_cache_dir(cache_dir)
     revisions = [
         revision.commit_hash
         for repo in cache.repos
