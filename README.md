@@ -26,6 +26,8 @@ mounted from `/opt/hindsight/hf-cache` on the host at
 `/home/hindsight/.cache/huggingface`. The active cache contains `hs-embed-1`
 and `hs-rerank-1`; Knowledge Banks use `hs-embed-1` through the text-only
 embedding provider. Image/audio/video knowledge-bank ingestion is unavailable.
+The cache is writable, so a missing model can be downloaded at runtime and
+retained on the host.
 
 ```text
 ghcr.io/arkylin/hindsight:latest          # Full

@@ -185,8 +185,6 @@ jobs:
 
           RUN /app/api/.venv/bin/python -c "import hindsight_ext_static_keys_tenant, hindsight_ext_bank_llm_routing"
 
-          ENV HF_HUB_OFFLINE=1 \
-              TRANSFORMERS_OFFLINE=1
           EOF
 
       - name: Set up QEMU
