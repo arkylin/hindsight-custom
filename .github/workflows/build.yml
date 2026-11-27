@@ -74,10 +74,12 @@ jobs:
             base_suffix: ""
             tag_suffix: ""
             cache_scope: full
+            model_bundle: hs-embed-1,hs-rerank-1
           - variant: slim
             base_suffix: "-slim"
             tag_suffix: "-slim"
             cache_scope: slim
+            model_bundle: none
     steps:
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -182,6 +184,7 @@ jobs:
           file: ./Dockerfile
           build-args: |
             HINDSIGHT_IMAGE=${{ steps.base.outputs.image }}
+            HINDSIGHT_VARIANT=${{ matrix.variant }}
           tags: |
             ${{ env.IMAGE }}:${{ needs.resolve-tag.outputs.tag }}${{ matrix.tag_suffix }}
             ${{ env.IMAGE }}:${{ needs.resolve-tag.outputs.version }}${{ matrix.tag_suffix }}
@@ -193,6 +196,7 @@ jobs:
             org.opencontainers.image.title=Hindsight custom ${{ matrix.variant }}
             io.github.arkylin.hindsight.variant=${{ matrix.variant }}
             io.github.arkylin.hindsight.base=${{ steps.base.outputs.image }}
+            io.github.arkylin.hindsight.model_bundle=${{ matrix.model_bundle }}
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: false

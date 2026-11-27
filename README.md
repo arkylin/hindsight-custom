@@ -21,6 +21,12 @@ Both variants are multi-arch (`linux/amd64`, `linux/arm64`) and include both
 extensions. They are built from the matching upstream Full or Slim image for
 the same tag; no third-party dependencies are added.
 
+The Full variant is trimmed to the models this deployment uses: `hs-embed-1`
+for text embeddings and `hs-rerank-1` for reranking. The upstream default
+`BAAI/bge-small-en-v1.5` and the knowledge-bank-only `EmbeddingGemma 2` model
+are removed. Knowledge Banks therefore use `hs-embed-1` through the text-only
+embedding provider; image/audio/video knowledge-bank ingestion is unavailable.
+
 ```text
 ghcr.io/arkylin/hindsight:latest          # Full
 ghcr.io/arkylin/hindsight:latest-slim     # Slim
