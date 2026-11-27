@@ -168,6 +168,35 @@ jobs:
           path: upstream
           fetch-depth: 1
 
+      - name: Prepare lean Full Dockerfile
+        if: steps.image.outputs.exists == 'false' && matrix.variant == 'full'
+        run: |
+          set -euo pipefail
+          cp scripts/prepare-local-models.py upstream/prepare-local-models.py
+          cp upstream/docker/standalone/Dockerfile upstream/Dockerfile.hindsight-custom
+          cat >> upstream/Dockerfile.hindsight-custom <<'EOF'
+
+          # Added by arkylin/hindsight-custom. Build from upstream source with
+          # PRELOAD_ML_MODELS=false, then bake only the two active models.
+          FROM standalone AS hindsight-custom
+
+          COPY hindsight-extensions/static-keys-tenant/hindsight_ext_static_keys_tenant /app/extensions/hindsight_ext_static_keys_tenant
+          COPY hindsight-extensions/bank-llm-routing/hindsight_ext_bank_llm_routing /app/extensions/hindsight_ext_bank_llm_routing
+          COPY --chown=1000:1000 prepare-local-models.py /tmp/prepare-local-models.py
+          ENV PYTHONPATH=/app/extensions
+
+          RUN /app/api/.venv/bin/python -c "import hindsight_ext_static_keys_tenant, hindsight_ext_bank_llm_routing"
+          RUN HF_HUB_DISABLE_PROGRESS_BARS=1 /app/api/.venv/bin/python /tmp/prepare-local-models.py \
+              && test -d /home/hindsight/.cache/huggingface/hub/models--hindsight-ai--hs-embed-1 \
+              && test -d /home/hindsight/.cache/huggingface/hub/models--hindsight-ai--hs-rerank-1 \
+              && test ! -d /home/hindsight/.cache/huggingface/hub/models--google--embeddinggemma-2 \
+              && test ! -d /home/hindsight/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5 \
+              && rm -f /tmp/prepare-local-models.py
+
+          ENV HF_HUB_OFFLINE=1 \
+              TRANSFORMERS_OFFLINE=1
+          EOF
+
       - name: Set up QEMU
         if: steps.image.outputs.exists == 'false'
         uses: docker/setup-qemu-action@v3
@@ -176,15 +205,16 @@ jobs:
         if: steps.image.outputs.exists == 'false'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
-        if: steps.image.outputs.exists == 'false'
+      - name: Build and push lean Full
+        if: steps.image.outputs.exists == 'false' && matrix.variant == 'full'
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./upstream
+          file: ./upstream/Dockerfile.hindsight-custom
+          target: hindsight-custom
           build-args: |
-            HINDSIGHT_IMAGE=${{ steps.base.outputs.image }}
-            HINDSIGHT_VARIANT=${{ matrix.variant }}
+            INCLUDE_LOCAL_MODELS=true
+            PRELOAD_ML_MODELS=false
           tags: |
             ${{ env.IMAGE }}:${{ needs.resolve-tag.outputs.tag }}${{ matrix.tag_suffix }}
             ${{ env.IMAGE }}:${{ needs.resolve-tag.outputs.version }}${{ matrix.tag_suffix }}
@@ -203,6 +233,32 @@ jobs:
           cache-from: type=gha,scope=hindsight-${{ matrix.cache_scope }}
           cache-to: type=gha,scope=hindsight-${{ matrix.cache_scope }},mode=max
 
+      - name: Build and push slim
+        if: steps.image.outputs.exists == 'false' && matrix.variant == 'slim'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          build-args: |
+            HINDSIGHT_IMAGE=${{ steps.base.outputs.image }}
+          tags: |
+            ${{ env.IMAGE }}:${{ needs.resolve-tag.outputs.tag }}${{ matrix.tag_suffix }}
+            ${{ env.IMAGE }}:${{ needs.resolve-tag.outputs.version }}${{ matrix.tag_suffix }}
+            ${{ env.IMAGE }}:latest${{ matrix.tag_suffix }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.resolve-tag.outputs.tag }}
+            org.opencontainers.image.version=${{ needs.resolve-tag.outputs.version }}
+            org.opencontainers.image.title=Hindsight custom slim
+            io.github.arkylin.hindsight.variant=slim
+            io.github.arkylin.hindsight.base=${{ steps.base.outputs.image }}
+            io.github.arkylin.hindsight.model_bundle=none
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          cache-from: type=gha,scope=hindsight-slim
+          cache-to: type=gha,scope=hindsight-slim,mode=max
+
       - name: Summary
         if: always()
         env:
@@ -210,12 +266,13 @@ jobs:
           TAG: ${{ needs.resolve-tag.outputs.tag }}
           VERSION: ${{ needs.resolve-tag.outputs.version }}
           EXISTS: ${{ steps.image.outputs.exists }}
+          BASE_IMAGE: ${{ matrix.variant == 'full' && 'upstream source, PRELOAD_ML_MODELS=false' || steps.base.outputs.image }}
         run: |
           {
             echo "### Hindsight custom image (${{ matrix.variant }})"
             echo ""
             echo "- upstream tag: \`${TAG}\`"
-            echo "- base image: \`${{ steps.base.outputs.image }}\`"
+            echo "- base image: \`${BASE_IMAGE}\`"
             echo "- build skipped: \`${EXISTS}\`"
             echo "- image: \`${IMAGE}\`"
             echo "- tags: \`${IMAGE}:latest${VARIANT_SUFFIX}\`, \`${IMAGE}:${TAG}${VARIANT_SUFFIX}\`, \`${IMAGE}:${VERSION}${VARIANT_SUFFIX}\`"
