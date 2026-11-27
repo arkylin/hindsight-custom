@@ -11,7 +11,7 @@ on:
         required: false
         default: ""
       force:
-        description: "Rebuild even if both custom variant tags already exist."
+        description: "Rebuild even if all custom variant tags already exist."
         type: boolean
         required: false
         default: false
@@ -75,6 +75,11 @@ jobs:
             tag_suffix: ""
             cache_scope: full
             model_bundle: external-hf-cache
+          - variant: onnx
+            base_suffix: ""
+            tag_suffix: "-onnx"
+            cache_scope: onnx
+            model_bundle: onnx-external-hf-cache
           - variant: slim
             base_suffix: "-slim"
             tag_suffix: "-slim"
@@ -129,7 +134,7 @@ jobs:
           fi
 
       - name: Check base image
-        if: steps.image.outputs.exists == 'false'
+        if: steps.image.outputs.exists == 'false' && matrix.variant != 'onnx'
         id: base
         env:
           VERSION: ${{ needs.resolve-tag.outputs.version }}
@@ -187,6 +192,35 @@ jobs:
 
           EOF
 
+      - name: Prepare minimal ONNX Dockerfile
+        if: steps.image.outputs.exists == 'false' && matrix.variant == 'onnx'
+        run: |
+          set -euo pipefail
+          cp upstream/docker/standalone/Dockerfile upstream/Dockerfile.hindsight-onnx
+          cat >> upstream/Dockerfile.hindsight-onnx <<'EOF'
+
+          # Added by arkylin/hindsight-custom. Minimal ONNX image: upstream core
+          # with only the local-onnx extra. It must not contain torch,
+          # sentence-transformers or flashrank.
+          FROM standalone AS hindsight-onnx
+
+          COPY hindsight-extensions/static-keys-tenant/hindsight_ext_static_keys_tenant /app/extensions/hindsight_ext_static_keys_tenant
+          COPY hindsight-extensions/bank-llm-routing/hindsight_ext_bank_llm_routing /app/extensions/hindsight_ext_bank_llm_routing
+          ENV PYTHONPATH=/app/extensions
+
+          RUN uv pip install --no-cache --python /app/api/.venv/bin/python \
+              "onnxruntime>=1.17.0" \
+              "transformers>=5.22.1" \
+              "tokenizers>=0.23.1,<0.24.0" \
+              "huggingface-hub>=0.20.0" \
+              "numpy>=1.26.0"
+
+          RUN uv pip check --python /app/api/.venv/bin/python
+
+          RUN /app/api/.venv/bin/python -c "import importlib.util as u; import onnxruntime, transformers; from transformers import AutoTokenizer; from hindsight_api.engine.embeddings import OnnxEmbeddings; from hindsight_api.engine.cross_encoder import OnnxCrossEncoder; assert u.find_spec('torch') is None, 'torch leaked into ONNX image'; assert u.find_spec('sentence_transformers') is None, 'sentence-transformers leaked into ONNX image'; assert u.find_spec('flashrank') is None, 'flashrank leaked into ONNX image'; print('ONNX-only dependency boundary ok', onnxruntime.__version__, transformers.__version__)"
+
+          EOF
+
       - name: Set up QEMU
         if: steps.image.outputs.exists == 'false'
         uses: docker/setup-qemu-action@v3
@@ -216,6 +250,34 @@ jobs:
             org.opencontainers.image.title=Hindsight custom ${{ matrix.variant }}
             io.github.arkylin.hindsight.variant=${{ matrix.variant }}
             io.github.arkylin.hindsight.base=${{ steps.base.outputs.image }}
+            io.github.arkylin.hindsight.model_bundle=${{ matrix.model_bundle }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          cache-from: type=gha,scope=hindsight-${{ matrix.cache_scope }}
+          cache-to: type=gha,scope=hindsight-${{ matrix.cache_scope }},mode=max
+
+      - name: Build and push minimal ONNX
+        if: steps.image.outputs.exists == 'false' && matrix.variant == 'onnx'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./upstream
+          file: ./upstream/Dockerfile.hindsight-onnx
+          target: hindsight-onnx
+          build-args: |
+            INCLUDE_LOCAL_MODELS=false
+            PRELOAD_ML_MODELS=false
+          tags: |
+            ${{ env.IMAGE }}:${{ needs.resolve-tag.outputs.tag }}${{ matrix.tag_suffix }}
+            ${{ env.IMAGE }}:${{ needs.resolve-tag.outputs.version }}${{ matrix.tag_suffix }}
+            ${{ env.IMAGE }}:latest${{ matrix.tag_suffix }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.resolve-tag.outputs.tag }}
+            org.opencontainers.image.version=${{ needs.resolve-tag.outputs.version }}
+            org.opencontainers.image.title=Hindsight custom ONNX
+            io.github.arkylin.hindsight.variant=onnx
+            io.github.arkylin.hindsight.base=upstream-source
             io.github.arkylin.hindsight.model_bundle=${{ matrix.model_bundle }}
           platforms: linux/amd64
           push: true
@@ -256,7 +318,7 @@ jobs:
           TAG: ${{ needs.resolve-tag.outputs.tag }}
           VERSION: ${{ needs.resolve-tag.outputs.version }}
           EXISTS: ${{ steps.image.outputs.exists }}
-          BASE_IMAGE: ${{ matrix.variant == 'full' && 'upstream source, PRELOAD_ML_MODELS=false' || steps.base.outputs.image }}
+          BASE_IMAGE: ${{ matrix.variant == 'full' && 'upstream source, PRELOAD_ML_MODELS=false' || matrix.variant == 'onnx' && 'upstream source, INCLUDE_LOCAL_MODELS=false, local-onnx extra' || steps.base.outputs.image }}
         run: |
           {
             echo "### Hindsight custom image (${{ matrix.variant }})"
@@ -293,7 +355,7 @@ jobs:
           CUTOFF=$(date -u -d "-${KEEP_DAYS} days" +%s)
           while IFS="$(printf '\t')" read -r id created tags; do
             [ -n "$id" ] || continue
-            if [ "$id" = "$NEWEST" ] || echo ",$tags," | grep -Eq ',(latest|latest-slim),'; then
+            if [ "$id" = "$NEWEST" ] || echo ",$tags," | grep -Eq ',(latest|latest-slim|latest-onnx),'; then
               echo "keep newest/latest-tagged: $id ($created) [$tags]"
               continue
             fi
