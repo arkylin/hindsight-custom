@@ -21,12 +21,11 @@ Both variants are built for `linux/amd64` and include both extensions. No
 third-party dependencies are added.
 
 The Full variant is built from the upstream source Dockerfile in GitHub Actions
-with `PRELOAD_ML_MODELS=false`, then bakes only `hs-embed-1` for text embeddings
-and `hs-rerank-1` for reranking. The upstream default
-`BAAI/bge-small-en-v1.5` and the knowledge-bank-only `EmbeddingGemma 2` model
-are not included. Knowledge Banks therefore use `hs-embed-1` through the
-text-only embedding provider; image/audio/video knowledge-bank ingestion is
-unavailable.
+with `PRELOAD_ML_MODELS=false` and contains **no model weights**. All models are
+mounted from `/opt/hindsight/hf-cache` on the host at
+`/home/hindsight/.cache/huggingface`. The active cache contains `hs-embed-1`
+and `hs-rerank-1`; Knowledge Banks use `hs-embed-1` through the text-only
+embedding provider. Image/audio/video knowledge-bank ingestion is unavailable.
 
 ```text
 ghcr.io/arkylin/hindsight:latest          # Full

@@ -74,7 +74,7 @@ jobs:
             base_suffix: ""
             tag_suffix: ""
             cache_scope: full
-            model_bundle: hs-embed-1,hs-rerank-1
+            model_bundle: external-hf-cache
           - variant: slim
             base_suffix: "-slim"
             tag_suffix: "-slim"
@@ -172,26 +172,18 @@ jobs:
         if: steps.image.outputs.exists == 'false' && matrix.variant == 'full'
         run: |
           set -euo pipefail
-          cp scripts/prepare-local-models.py upstream/prepare-local-models.py
           cp upstream/docker/standalone/Dockerfile upstream/Dockerfile.hindsight-custom
           cat >> upstream/Dockerfile.hindsight-custom <<'EOF'
 
           # Added by arkylin/hindsight-custom. Build from upstream source with
-          # PRELOAD_ML_MODELS=false, then bake only the two active models.
+          # PRELOAD_ML_MODELS=false so models live in a host-mounted HF cache.
           FROM standalone AS hindsight-custom
 
           COPY hindsight-extensions/static-keys-tenant/hindsight_ext_static_keys_tenant /app/extensions/hindsight_ext_static_keys_tenant
           COPY hindsight-extensions/bank-llm-routing/hindsight_ext_bank_llm_routing /app/extensions/hindsight_ext_bank_llm_routing
-          COPY --chown=1000:1000 prepare-local-models.py /tmp/prepare-local-models.py
           ENV PYTHONPATH=/app/extensions
 
           RUN /app/api/.venv/bin/python -c "import hindsight_ext_static_keys_tenant, hindsight_ext_bank_llm_routing"
-          RUN HF_HUB_DISABLE_PROGRESS_BARS=1 /app/api/.venv/bin/python /tmp/prepare-local-models.py \
-              && test -d /home/hindsight/.cache/huggingface/hub/models--hindsight-ai--hs-embed-1 \
-              && test -d /home/hindsight/.cache/huggingface/hub/models--hindsight-ai--hs-rerank-1 \
-              && test ! -d /home/hindsight/.cache/huggingface/hub/models--google--embeddinggemma-2 \
-              && test ! -d /home/hindsight/.cache/huggingface/hub/models--BAAI--bge-small-en-v1.5 \
-              && rm -f /tmp/prepare-local-models.py
 
           ENV HF_HUB_OFFLINE=1 \
               TRANSFORMERS_OFFLINE=1
